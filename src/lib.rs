@@ -1,7 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    fmt::Write,
-    str::{Chars, FromStr},
+    collections::{HashMap, HashSet, VecDeque}, fmt::Write, str::{Chars, FromStr}
 };
 
 use anyhow::{Context, Result};
@@ -207,40 +205,99 @@ impl Command {
         })
     }
 
-    pub fn get_arguments(&mut self) -> VecDeque<String> {
+    pub fn drain_arguments(&mut self) -> VecDeque<String> {
         let mut out = VecDeque::new();
         out.extend(self.arguments.drain(..));
         out
     }
 
-    pub fn next_argument<T: FromStr>(&mut self) -> Result<T>
+    pub fn get_next_argument(&mut self) -> Result<String> {
+        self.arguments
+            .pop_front()
+            .context("Missing positional argument")
+    }
+
+    pub fn parse_next_argument<T: FromStr>(&mut self) -> Result<T>
     where
         T::Err: std::error::Error + Send + Sync + 'static,
     {
-        self.arguments
-            .pop_front()
-            .context("Missing positional argument")?
+        self.get_next_argument()?
             .parse::<T>()
             .context("Couldn't parse positional argument.")
     }
 
-    pub fn get_flag(&mut self, flag: &str) -> Option<VecDeque<String>> {
+    pub fn drain_flag(&mut self, flag: &str) -> Option<VecDeque<String>> {
         self.flags.remove(flag)
     }
 
-    pub fn next_flag<T: FromStr>(&mut self, flag: &str) -> Result<T>
-    where
-        T::Err: std::error::Error + Send + Sync + 'static,
-    {
+    pub fn get_next_flag(&mut self, flag: &str) -> Result<String> {
         self.flags
             .get_mut(flag)
             .and_then(|values| values.pop_front())
-            .context(format!("Missing value for flag {}", flag))?
+            .context(format!("Missing value for flag {}", flag))
+    }
+
+    pub fn parse_next_flag<T: FromStr>(&mut self, flag: &str) -> Result<T>
+    where
+        T::Err: std::error::Error + Send + Sync + 'static,
+    {
+        self.get_next_flag(flag)?
             .parse::<T>()
             .context(format!("Couldn't parse flag '{}'", flag))
     }
 
-    pub fn check_switch(&mut self, switch: &str) -> bool {
-        self.switches.contains(switch)
+    pub fn get_switch(&mut self, switch: &str) -> bool {
+        self.switches.remove(switch)
+    }
+}
+
+pub struct Flag<'a, T: FromStr>
+where
+    T::Err: std::error::Error + Send + Sync + 'static,
+{
+    name: &'a str,
+    alias: Option<&'a str>,
+    default: Option<T>,
+}
+
+impl<'a, T: FromStr> Flag<'a, T>
+where
+    T::Err: std::error::Error + Send + Sync + 'static,
+{
+    pub fn new(name: &'a str) -> Self {
+        Self {
+            name,
+            alias: None,
+            default: None,
+        }
+    }
+
+    pub fn alias(mut self, alias: &'a str) -> Self {
+        self.alias = Some(alias);
+        self
+    }
+
+    pub fn default(mut self, default: T) -> Self {
+        self.default = Some(default);
+        self
+    }
+
+    pub fn parse(self, cmd: &mut Command) -> Result<T> {
+        let res = match cmd.get_next_flag(self.name) {
+            Ok(v) => Ok(v),
+            Err(v) if self.alias.is_none() => return Err(v),
+            _ => {
+                let alias = self.alias.unwrap();
+                cmd.get_next_flag(alias).context(format!(
+                    "Missing value for flag '{}' ('{}')",
+                    self.name, alias
+                ))
+            }
+        };
+
+        match res {
+            Ok(v) => v.parse::<T>().context(format!("Couldn't parse flag.")),
+            Err(e) => self.default.map_or(Err(e), |v| Ok(v)),
+        }
     }
 }
