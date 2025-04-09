@@ -1,5 +1,5 @@
 [package]
-name = "rust-cmd-parser"
+name = "cmd-thing"
 version = "0.1.0"
 edition = "2021"
 
